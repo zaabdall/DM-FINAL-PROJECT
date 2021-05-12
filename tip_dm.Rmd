@@ -1,0 +1,284 @@
+---
+title: "Final Project"
+author: "Zayd Abdalla, Areeya Aksornpan"
+date: "5/10/2021"
+output: word_document
+---
+# Abstract
+
+We sought to understand the tipping behavior of NYC Yellow Taxi riders from last spring, the onset of the COVID-19 pandemic in New York City.  We analyzed NYC Yellow Taxi data from the months of March, April, and May of 2020. After managing and cleaning our data, we created multiple visualizations characterizing demand and tipping behavior across multiple factors such as pick-up time or fare amounts. Notably, we found that demand for taxi rides fell by 92% between March and April. Furthermore, we illustrate that high levels of taxi demand occurred between 7 AM and 10 PM, peaking between 5-7 PM. We then built two models (a simple model and an improved one) predicting tip amounts using random forests and k-folds cross validation. Our improved model yielded a roughly 12 percentage point increase in accuracy of predictions. We found that riders will generally tip taxi drivers either nothing or highly, with far fewer occurrences of small tips. 
+
+# Introduction
+
+Over the past year, the entire world had been struck by COVID-19, leaving many to stay at home in fear of the virus. New York City had become an early epicenter for the virus with over 200,000 cases between March to May. Furthermore, the city experienced historic unemployment rates of 15% and 20%, in April and May respectively. Resultantly, this combination of a public health crisis and the massive displacement of jobs left many taxi drivers with far fewer riders than a typical recession. Recent reforms such as in March 2021 have aimed to help taxi drivers with debt relief using a $65 million federal fund. Our reasoning for pursuing this field was quite simple; we believed the damage inflicted to this market had lacked national news coverage and sought to inform ourselves analytically.
+
+Our research question is simple: what is the tipping behavior of taxi riders during this time period? Tips earned on the job can function as an additional revenue stream for taxi drivers. Given the circumstances of a global pandemic, we would like to see how accurately we can build a predictive model for estimating the tips earned using the available data. Answering this question would be beneficial in understanding consumer behavior for tipping across different factors as well as visualizing their demand for taxi rides. 
+
+
+# Methods
+
+Our data set contains over 3.5 million observations from last Spring (i.e. March, April, and May). The information within the data includes charges such as fare rates and surcharges, as well as trip information like number of passengers and distance traveled. We had begun our exploration of the NYC Yellow Taxi Market by managing and cleaning our data set. This process included adjusting many variables such as factorizing categorical variables (i.e. payment type, tip amount category, etc.) and even  converting string pick-up/drop-off times to usable datetime formats. Importantly, we define tips by categories: zero, one, two, and high. The first three categories are dollar amounts that are typical of this market according to summary statistics. The last category considers tips greater than 2 dollars, including high tips up to 200 dollars. Following our initial data management and cleaning, we visualize the tipping behavior of consumers across different factors. This process helps us deliberate between relevant variables for our predictive model later on. We trained our data to predict tipping using random forest models and K-fold cross validation. The data set is rather large for our student computer systems, so we will draw a smaller sample of 80,000 observations to build our models from. Our simple random forest model uses 2 predictors and 500 trees. Our simple model's k-folds cross validation uses 10 folds and 5 repeats. Our improved random forest model utilizes 8 predictors and 300 trees (resource and time constrained made running with 500 problematic). Our improved k-folds cross validation uses 10 folds and 5 repeats.
+
+# Results
+
+```{r packages, echo=FALSE, include=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(mosaic)
+library(mosaicData)
+library(tidyverse)
+library(tidymodels)
+library(tidyquant)
+library(estimatr)
+library(gcookbook)
+library(ggthemes)
+library(kknn)
+library(glmnet)
+library(lubridate)
+library(scales)
+library(patchwork)
+library(hrbrthemes)
+library(kableExtra)
+library(plyr)
+library(randomForest)
+library(caret)
+library(doSNOW)
+library(e1071)
+options("scipen"=100, "digits"=4)
+```
+
+```{r load_data, include=FALSE}
+spring_20_nyc_taxi <- read.csv("D:/DM FINAL/Data/spring_20_nyc_taxi.csv")
+start <- ymd_hms(spring_20_nyc_taxi$tpep_pickup_datetime,tz=Sys.timezone())
+pickup_time <- hour(start)
+spring_20_nyc_taxi$pickup_time <- pickup_time
+as.factor(spring_20_nyc_taxi$payment_type)
+spring_20_nyc_taxi$payment_type <- factor(spring_20_nyc_taxi$payment_type,levels = c("1","2","3","4"),labels = c("Credit","Cash","No Charge", "Dispute"))
+```
+
+```{r, include=FALSE}
+summary(spring_20_nyc_taxi$tip_amount)
+```
+
+```{r, include=FALSE}
+spring_20_nyc_taxi <- cbind(spring_20_nyc_taxi, tip_amount_category = 'NA')
+
+b <- c(-Inf, 0, 1, 2, 200)
+names <- c("Zero", "One", "Two","High")
+spring_20_nyc_taxi$tip_amount_category <- cut(spring_20_nyc_taxi$tip_amount, breaks = b, labels = names)
+spring_20_nyc_taxi$tip_amount_category <- as.factor(spring_20_nyc_taxi$tip_amount_category)
+na_spring_20_nyc_taxi <- spring_20_nyc_taxi[complete.cases(spring_20_nyc_taxi[ , 10]),]
+spring_20_nyc_taxi <- na_spring_20_nyc_taxi[complete.cases(na_spring_20_nyc_taxi[ , 20]),]
+rm(na_spring_20_nyc_taxi)
+
+table(spring_20_nyc_taxi$tip_amount_category)
+```
+```{r Rides, echo=FALSE}
+g1 <- spring_20_nyc_taxi %>%
+  mutate(month = month(tpep_pickup_datetime, label = TRUE)) %>%
+  ggplot() + 
+  geom_bar(aes(x = month), fill = "gold2", color = "black") +
+ scale_y_continuous(labels = comma) + xlab("Month") +ylab("Number of Taxi Rides") + ggtitle("Figure 1. Number of Yellow Taxi Rides in NYC during the Spring")
+
+g1
+```
+```{r Tip_Pick_Up, echo=FALSE}
+g3 <- ggplot(spring_20_nyc_taxi,aes(pickup_time, fill=tip_amount_category)) + geom_bar(position ="stack") +  xlab("Pick Up Time (Hour)") + ylab("Frequency") + ggtitle("Figure 2. Tip Amount Distribution by Pick Up Time") + coord_flip()
+
+g3 ##Figure 2.
+```
+```{r, include=FALSE}
+summary(spring_20_nyc_taxi$fare_amount)
+```
+
+```{r Oopsie_Dupesie, include=FALSE}
+##In case of duplicate columns, use to remove
+#spring_20_nyc_taxi <- subset (spring_20_nyc_taxi, select = -fare_amount_category)
+```
+
+```{r, include=FALSE}
+spring_20_nyc_taxi <- cbind(spring_20_nyc_taxi, fare_amount_category = 'NA')
+b <- c(-Inf, 6, 9, 14, 700)
+names <- c("Low", "Medium", "High","very High")
+spring_20_nyc_taxi$fare_amount_category <- cut(spring_20_nyc_taxi$fare_amount, breaks = b, labels = names)
+spring_20_nyc_taxi$fare_amount_category <- as.factor(spring_20_nyc_taxi$fare_amount_category)
+spring_20_nyc_taxi <-  spring_20_nyc_taxi[complete.cases(spring_20_nyc_taxi[ , 21]),]
+
+table(spring_20_nyc_taxi$fare_amount_category)
+```
+
+```{r, echo=FALSE}
+#spring_20_nyc_taxi <- subset (spring_20_nyc_taxi, select = -(fare_amount_category = "NA"), na.rm = TRUE)
+
+#fare_amount_category<-fare_amount_category[!is.na(fare_amount_category)]
+
+g5 <- ggplot(spring_20_nyc_taxi,aes(tip_amount_category, fill=fare_amount_category)) + geom_bar(position ="stack") +  xlab("Tip Amount") + ylab("Frequency") + ggtitle("Figure 3. Tip Amount Distribution by Fare Amount") + coord_flip() 
+
+g5  #figure 3.
+```
+
+```{r surcharge, include=FALSE}
+summary(spring_20_nyc_taxi$improvement_surcharge)
+summary(spring_20_nyc_taxi$congestion_surcharge)
+summary(spring_20_nyc_taxi$mta_tax)
+summary(spring_20_nyc_taxi$tolls_amount)
+```
+Simple model
+```{r, include=FALSE}
+rm(g1)
+rm(g2)
+rm(g3)
+rm(g4)
+rm(g5)
+dataForPrediction <- spring_20_nyc_taxi[,c("pickup_time","payment_type","tip_amount_category")]
+```
+
+```{r, echo =FALSE}
+
+
+train <- dataForPrediction[1:80000, c("pickup_time","payment_type","tip_amount_category")]
+rf.train.1 <- train[,c("pickup_time","payment_type")]
+rf.label <-as.factor(train$tip_amount_category)
+set.seed(300)
+rf.1 <- randomForest(x=rf.train.1, y=rf.label, importance = TRUE, ntree = 500)
+rf.1 #figure 6.
+```
+
+```{r, include =FALSE}
+set.seed(300)
+cv.10.folds <- createMultiFolds(rf.label, k=10, times = 5)
+table(rf.label)
+```
+
+```{r, include=FALSE}
+#check for stratification (Every fold has the same ratio of classes)
+table(rf.label[cv.10.folds[[33]]])
+```
+
+```{r, include=FALSE}
+#train the model using repeated cross validation, use 10 folds and repeat it 10 times and use the 100 #collection of indexes
+ctrl.1 <- trainControl(method = "repeatedcv", number = 10, repeats = 5, index = cv.10.folds)
+#Setup the doSNOW Package for multi-core training which is helpful for training the trees.
+#socket server are the simplest and it is being run on a single machine
+# 6 child processes
+cl1 <- makeCluster(6, type = "SOCK")
+registerDoSNOW(cl1)
+set.seed(300)
+#tune length allows the caret to use a maximum combination of 3 values (e.g. 3 Mtry values)
+rf.1.cv.1 <- train(x= rf.train.1, y=rf.label, method="rf", tuneLength=3, ntree=300, trControl=ctrl.1)
+```
+
+```{r, echo=FALSE}
+stopCluster(cl1)
+rf.1.cv.1 #figure 7.
+```
+
+Improved Prediction Model for Tip Amount
+
+```{r, include=FALSE}
+rm(train)
+rm(dataForPrediction)
+rm(ctrl.1)
+rm(cv.10.folds1)
+rm(rf.train.1)
+rm(rf.1)
+rm(rf.1.cv.1)
+rm(cl1)
+
+dataForPrediction2 <- spring_20_nyc_taxi[,c("pickup_time","payment_type","tip_amount_category", "fare_amount_category", "improvement_surcharge", "congestion_surcharge", "trip_distance", "passenger_count", "extra")]
+```
+
+
+
+```{r, echo =FALSE}
+# train a random forest with 8 parameters using pickUpTime & payment_type
+
+train2 <- dataForPrediction2[1:80000, c("pickup_time","payment_type","tip_amount_category", "fare_amount_category", "improvement_surcharge", "congestion_surcharge", "trip_distance", "passenger_count", "extra"),]
+
+rf.train.2 <- train2[,c("pickup_time","payment_type", "fare_amount_category", "improvement_surcharge", "congestion_surcharge", "trip_distance", "passenger_count", "extra")]
+
+rf.label2 <-as.factor(train2$tip_amount_category)
+
+set.seed(300)
+
+rf.2 <- randomForest(x=rf.train.2, y=rf.label2, importance = TRUE, ntree = 300)
+rf.2 #figure  4.
+```
+
+
+```{r, include=FALSE}
+set.seed(300)
+
+cv.10.folds2 <- createMultiFolds(rf.label2, k=10, times = 5)
+
+table(rf.label2)
+```
+
+```{r, include=FALSE}
+#check for stratification (Every fold has the same ratio of classes)
+table(rf.label2[cv.10.folds2[[33]]])
+```
+
+```{r, include=FALSE}
+ctrl.2 <- trainControl(method = "repeatedcv", number = 10, repeats = 5, index = cv.10.folds2)
+
+#Setup the doSNOW Package for multi-core training which is helpful for training the trees.
+#socket server are the simplest and it is being run on a single machine
+# 6 child processes
+cl2 <- makeCluster(6, type = "SOCK")
+
+registerDoSNOW(cl2)
+
+set.seed(300)
+
+
+#tune length allows the caret to use a maximum combination of 3 values (e.g. 3 Mtry values)
+rf.2.cv.2 <- train(x= rf.train.2, y=rf.label2, method="rf", tuneLength=3, ntree=100, trControl=ctrl.2)
+```
+
+```{r, echo=FALSE}
+stopCluster(cl2)
+
+rf.2.cv.2 #figure 5.
+```
+
+
+
+# Conclusion
+
+Figure 1. illustrates the number of NYC Yellow Taxi Rides by month from last spring. Clearly, there is a massive drop in rides from March to April (a roughly 92% decrease). While the graphic is fairly simplistic, it may serve as a starting point to understand consumer and driver perspectives. From the consumer side, partaking in taxi rides is understandably hazardous given the onset of COVID-19 within New York. Contrastingly, the nature of some in-person jobs, such as construction, can not function remotely and still requires transportation. From the driver perspective, revenues—a function of quantity—are heavily decreased during this time of little demand. 
+
+Figure 2. illustrates the tip amounts a rider receives over each hour of the day. We found that the propensity for each tip amount was fairly consistent across the time of day. From our observation, it appears that most riders seem to either tip highly or not at all. Furthermore, it also serves as a visualization of rider demand by time of day. From observing the graph, we see that yellow taxi demand is quite high from roughly 7 AM to 10 PM, with peak hours occurring roughly between 5-7 PM.
+
+Figure 3. illustrates the relationship between tip amounts and fare amounts. Interestingly, we find that tips of zero are distributed very evenly across the different levels of fare amounts. Furthermore, high tips are distributed fairly evenly for all the fare amounts except for low fares. A plausible explanation for this trend may be that short rides yield lower fares, so kinder tips are far less likely due to the simplicity of the rider's job fulfillment. 
+
+We begun our model building by starting with a very simple random forest model for tips using only 2 predictors. Our confusion matrix for this model reported an error rate of roughly 33%, which is not good at all. Our prediction of 1 and 2 dollar tip amounts seems to have a high error, with 1 dollar tip amounts having a high error regardless of the model specification we used. A plausible explanation could be because we have a low number of 1 dollar tip amounts which makes it more difficult for the model to accurately predict. Intuitively, this makes sense since 1 dollar is such a low amount, riders might opt to either just tip nothing at all or more than a few dollars generally. This explanation seems to be plausible for 2 dollar tip amounts as well, but to a far lesser extent due to the larger number of 2 dollar tip amount observations in our data. To continue our analysis, we also performed a k-folds cross validation using 10 folds and 5 repeats. Our results with this method had attained nearly identical results as before with the random forest model.
+
+Having been informed by our exploratory analysis, we built a more improved random forest model with 8 predictors now. This time, our confusion matrix for the model reported an error rate of roughly 21%, which is far better than where we had started. Again, we found that predicting one dollar tip amounts had a high error, but the error in predicting two dollar tip amounts fell significantly. Next, we performed a k-folds cross validation using 10 folds and 5 repeats. Again, our results with this method had attained nearly identical results as before with the random forest model. In both the simple and improved model, we found that the best mtry value was 2. 
+
+We improved upon the simple model quite significantly, though adjusting for factors such as better computer resources, data involving other variables such as weather, and conducting this model in a year not marred by COVID-19 might yield more accurate results for the taxi market. Nonetheless, we can see that our model has a solid foundation for prediciting tip amounts, which are typically either zero or high. The few dollar tips (i.e. the 1 and 2 dollar tip amounts) tend to be relatively less common, which may suggest that riders typically behave by either tipping nothing or tipping highly. 
+
+
+
+# Appendix
+
+Figure 4. illustrates tip amounts by the rider's option of payment, which are Credit, Cash, No Charge, and Dispute. We separated the tip amounts into four different categories, namely Zero, One, Two, and High. We see that passengers who use their credit card to pay will also tip highly roughly 50% of the time. Alternatively, when they pay by cash, the data claims that there is no tip (zero). However, the code-book for the data claims that the data set does not record cash tips, hence we see this visual. It is likely that riders who pay in cash are including tips, but these tips simply do not appear in our data.
+
+
+
+```{r Tip_Payment_type, echo=FALSE} 
+###add to appendix
+g2 <- ggplot(spring_20_nyc_taxi,aes(payment_type, fill=tip_amount_category)) + geom_bar(position ="stack") +  xlab("Payment Type") + ylab("Frequency") + ggtitle("Figure 4. Tip Amount Distribution by Payment type") + coord_flip()
+
+g2
+```
+
+Figure 5. illustrates the tip amount by the rider's option of vendor, Type 1 and Type 2. Type 1 vendor is Creative Mobile Technologies, LLC and Type 2 vendor is VeriFone Inc. We see that riders utilize services from Type 2 vendors roughly twice as much more than Type 1 vendors. However, the type of vendor does not seem to affect the tip amounts passengers provide. We observed that most riders tip high amounts, followed by not tipping at all, then 2 dollars, and lastly 1 dollar. It appears that about 40% of riders tip high amounts, no matter the vendor type.
+
+```{r, echo = FALSE}
+## add to appendix
+g4 <- ggplot(spring_20_nyc_taxi,aes(VendorID, fill=tip_amount_category)) + geom_bar(position ="stack") +  xlab("Vendor") + ylab("Frequency") + ggtitle("Figure 5. Tip Amount Distribution by Vendor") + coord_flip()
+
+g4
+```
+
+
